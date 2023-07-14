@@ -3,7 +3,6 @@ local Job = require("plenary.job")
 local M = {}
 
 local branch_map = {}
-local current_branch = nil
 local check_timer_interval = 1000 * 60 -- 1 minute milliseconds
 local branch_idol_time = 60 -- 1 minute in seconds
 
@@ -62,20 +61,12 @@ end
 function M.flush_time_tracking_buffer() check_interval(true) end
 
 function M.start_time_tracking()
-    -- capture the current ticket from the branch name on an event that is fired often enough to
-    -- pick up a change in branch, but not so often that it's a performance hit
-    vim.api.nvim_create_autocmd("BufEnter", {
-        group = vim.api.nvim_create_augroup("MetricsTimeTrackingBufEnter",
-                                            {clear = true}),
-        callback = function() current_branch = get_current_branch_name() end
-    })
-
     -- whenever the cursor is moved, capture or update the time tracking for the current ticket
     vim.api.nvim_create_autocmd("CursorMoved", {
         group = vim.api.nvim_create_augroup("MetricsTimeTracking",
                                             {clear = true}),
         callback = function()
-            local branch_name = current_branch
+            local branch_name = get_current_branch_name()
 
             if not branch_name then return end
 
@@ -102,11 +93,9 @@ function M.start_time_tracking()
         end
     })
 
-    -- start a timer to check the idol time of a ticket and flush the time tracking range to the db
-    -- if it's been idle for too long
     local timer = vim.loop.new_timer()
-    local interval = check_timer_interval
-    timer:start(0, interval, vim.schedule_wrap(function() check_interval() end))
+    timer:start(0, check_timer_interval,
+                vim.schedule_wrap(function() check_interval(false) end))
 end
 
 function M.init_db()
