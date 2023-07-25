@@ -1,21 +1,12 @@
 local Job = require("plenary.job")
+local util = require("metrics.util")
 
 local M = {}
 
 local branch_map = {}
 local check_timer_interval = 1000 * 60 -- 1 minute milliseconds
 local branch_idol_time = 60 -- 1 minute in seconds
-
-local function get_db_path()
-	return vim.fn.getcwd() .. "/" .. M.config.db_filename
-end
-local function get_current_branch_name()
-	local branch_name = vim.fn.system("git rev-parse --abbrev-ref HEAD")
-
-	-- trim branch_name
-	branch_name = string.gsub(branch_name, "\n", "")
-	return branch_name
-end
+local current_branch = nil
 
 local function check_interval(force)
 	for branch_name, branch_info in pairs(branch_map) do
@@ -36,7 +27,7 @@ local function check_interval(force)
 
 			Job:new({
 				command = "sqlite3",
-				args = { get_db_path(), query },
+				args = { M.get_db_path(), query },
 				on_exit = function(_result, return_val)
 					if return_val == 0 then
 						branch_map[branch_name] = nil
@@ -55,6 +46,10 @@ function M.setup(config)
 	M.config = vim.tbl_extend("keep", default_config, config or {})
 end
 
+M.get_db_path = function()
+	return vim.fn.getcwd() .. "/" .. M.config.db_filename
+end
+
 function M.flush_time_tracking_buffer()
 	check_interval(true)
 end
@@ -65,7 +60,7 @@ function M.start_time_tracking()
 	vim.api.nvim_create_autocmd("BufEnter", {
 		group = vim.api.nvim_create_augroup("MetricsTimeTrackingBufEnter", { clear = true }),
 		callback = function()
-			current_branch = get_current_branch_name()
+			current_branch = util.get_current_branch_name()
 		end,
 	})
 
@@ -120,7 +115,7 @@ function M.init_db()
 
 	Job:new({
 		command = "sqlite3",
-		args = { get_db_path(), create_time_tracking_table },
+		args = { M.get_db_path(), create_time_tracking_table },
 		on_exit = function(_j, _return_val) end,
 		on_stdout = function(_j, data)
 			print("on_stdout", data)
@@ -132,7 +127,13 @@ function M.init_db()
 end
 
 function M.get_time_worked_for_current_branch_async(callback)
-	local branch_name = get_current_branch_name()
+	local branch_name = util.get_current_branch_name()
+
+	if not branch_name then
+		print("Not in a valid git repository.")
+		return
+	end
+
 	local query_by_branch_name = [[
          SELECT branch, SUM(strftime('%s', end_time) - strftime('%s', start_time))  AS total_time_seconds
          from time_tracking
@@ -142,7 +143,7 @@ function M.get_time_worked_for_current_branch_async(callback)
 
 	Job:new({
 		command = "sqlite3",
-		args = { get_db_path(), query_by_branch_name },
+		args = { M.get_db_path(), query_by_branch_name },
 		on_exit = function(j, _return_val)
 			local result = j:result()
 			if #result == 0 then
